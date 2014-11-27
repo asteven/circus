@@ -119,9 +119,31 @@ circus - single section
     **loggerconfig**
         A path to an INI, JSON or YAML file to configure standard Python
         logging for the Arbiter.  The special value "default" uses the builtin
-	logging configuration based on the optional loglevel and logoutput
-	options.
-
+        logging configuration based on the optional loglevel and logoutput options.
+	
+		**Example YAML Configuration File**
+		
+	.. code-block:: yaml
+	
+	        version: 1
+	        disable_existing_loggers: false
+	        formatters:
+	          simple:
+	            format: '%(asctime)s - %(name)s - [%(levelname)s] %(message)s'
+	        handlers:
+	          logfile:
+	            class: logging.FileHandler
+	            filename: logoutput.txt
+	            level: DEBUG
+	            formatter: simple
+	        loggers:
+	          circus:
+	            level: DEBUG
+	            handlers: [logfile]
+	            propagate: no
+	        root:
+	          level: DEBUG
+	          handlers: [logfile]
 
 watcher:NAME - as many sections as you want
 ===========================================
@@ -208,11 +230,11 @@ watcher:NAME - as many sections as you want
         class defined in **stdout_stream.class**.
 
     **close_child_stdout**
-        If set to True, the sdout stream of each process will be sent to
+        If set to True, the stdout stream of each process will be sent to
         /dev/null after the fork. Defaults to False.
 
     **close_child_stderr**
-        If set to True, the sderr stream of each process will be sent to
+        If set to True, the stderr stream of each process will be sent to
         /dev/null after the fork. Defaults to False.
 
     **send_hup**

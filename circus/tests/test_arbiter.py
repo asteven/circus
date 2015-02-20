@@ -5,6 +5,7 @@ import tornado
 from tempfile import mkstemp
 from time import time
 import zmq.utils.jsonapi as json
+import mock
 try:
     from urllib.parse import urlparse
 except ImportError:
@@ -315,6 +316,27 @@ class TestTrainer(TestCircus):
         yield self.stop_arbiter()
 
     @tornado.testing.gen_test
+    def test_reload_uppercase(self):
+        yield self.start_arbiter(graceful_timeout=0)
+        name = 'test_RELOAD'
+        yield self._call("add", name=name, cmd=self._get_cmd(),
+                         start=True, options=self._get_options())
+
+        resp = yield self._call("list", name=name)
+        processes1 = resp.get('pids')
+
+        truncate_file(self.test_file)  # clean slate
+
+        yield self._call("reload")
+        self.assertTrue(async_poll_for(self.test_file, 'START'))  # restarted
+
+        resp = yield self._call("list", name=name)
+        processes2 = resp.get('pids')
+
+        self.assertNotEqual(processes1, processes2)
+        yield self.stop_arbiter()
+
+    @tornado.testing.gen_test
     def test_reload_sequential(self):
         yield self.start_arbiter(graceful_timeout=0)
         name = 'test_reload_sequential'
@@ -586,6 +608,37 @@ class TestArbiter(TestCircus):
     Unit tests for the arbiter class to codify requirements within
     behavior.
     """
+    def test_start_with_callback(self):
+        controller = "tcp://127.0.0.1:%d" % get_available_port()
+        sub = "tcp://127.0.0.1:%d" % get_available_port()
+        arbiter = Arbiter([], controller, sub, check_delay=-1)
+
+        callee = mock.MagicMock()
+
+        def callback(*args):
+            callee()
+            arbiter.stop()
+
+        arbiter.start(cb=callback)
+
+        self.assertEqual(callee.call_count, 1)
+
+    @tornado.testing.gen_test
+    def test_start_with_callback_and_given_loop(self):
+        controller = "tcp://127.0.0.1:%d" % get_available_port()
+        sub = "tcp://127.0.0.1:%d" % get_available_port()
+        arbiter = Arbiter([], controller, sub, check_delay=-1,
+                          loop=get_ioloop())
+
+        callback = mock.MagicMock()
+
+        try:
+            yield arbiter.start(cb=callback)
+        finally:
+            yield arbiter.stop()
+
+        self.assertEqual(callback.call_count, 0)
+
     @tornado.testing.gen_test
     def test_start_watcher(self):
         watcher = MockWatcher(name='foo', cmd='serve', priority=1)

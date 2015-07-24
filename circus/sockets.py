@@ -202,8 +202,9 @@ class CircusSocket(socket.socket):
                     # bind when binding on IN_ADDR_ANY or IN_ADDR_BROADCAST.
                     import IN
                     if hasattr(IN, 'SO_BINDTODEVICE'):
+                        interface = self.interface + '\0'
                         self.setsockopt(socket.SOL_SOCKET, IN.SO_BINDTODEVICE,
-                                        self.interface + '\0')
+                                        interface.encode())
                         logger.debug('Binding to device: %s' % self.interface)
 
                 self.bind((self.host, self.port))

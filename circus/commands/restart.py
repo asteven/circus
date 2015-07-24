@@ -1,6 +1,54 @@
+import re
+import fnmatch
+from functools import partial
 from circus.commands.base import Command
-from circus.exc import ArgumentError
+from circus.exc import ArgumentError, MessageError
 from circus.util import TransformableFuture
+
+
+def execute_watcher_start_stop_restart(command, arbiter, props,
+                                       watcher_function_name,
+                                       watchers_function, arbiter_function):
+    """base function to handle start/stop/restart watcher requests.
+    since this is always the same procedure except some function names this
+    function handles all watcher start/stop commands
+    """
+    if 'name' in props:
+        match = props.get('match', 'glob')
+        if match == 'simple':
+            watchers = [command._get_watcher(arbiter, props['name'])]
+        else:
+            if match == 'glob':
+                name = re.compile(fnmatch.translate(props['name']))
+            elif match == 'regex':
+                name = re.compile(props['name'])
+            else:
+                raise MessageError("unknown match method %s" % match)
+            watchers = [watcher
+                        for watcher in arbiter.iter_watchers()
+                        if name.match(watcher.name.lower())]
+
+        if not watchers:
+            raise MessageError("program %s not found" % props['name'])
+
+        if len(watchers) == 1:
+            if props.get('waiting'):
+                resp = TransformableFuture()
+                func = getattr(watchers[0], watcher_function_name)
+                resp.set_upstream_future(func())
+                resp.set_transform_function(lambda x: {"info": x})
+                return resp
+            return getattr(watchers[0], watcher_function_name)()
+
+        def watcher_iter_func(reverse=True):
+            return sorted(watchers, key=lambda a: a.priority, reverse=reverse)
+
+        return watchers_function(watcher_iter_func=watcher_iter_func)
+    else:
+        return arbiter_function()
+
+match_options = ('match', 'match', 'glob',
+                 "Watcher name matching method (simple, glob or regex)")
 
 
 class Restart(Command):
@@ -20,7 +68,8 @@ class Restart(Command):
                 "command": "restart",
                 "properties": {
                     "name": "<name>",
-                    "waiting": False
+                    "waiting": False,
+                    "match": "[simple|glob|regex]"
                 }
             }
 
@@ -37,22 +86,28 @@ class Restart(Command):
         :ref:`graceful_timeout option <graceful_timeout>`, it can take some
         time.
 
+        The ``match`` parameter can have the value ``simple`` for string
+        compare, ``glob`` for wildcard matching (default) or ``regex`` for
+        regex matching.
+
 
         Command line
         ------------
 
         ::
 
-            $ circusctl restart [<name>] [--waiting]
+            $ circusctl restart [name] [--waiting] [--match=simple|glob|regex]
 
         Options
         +++++++
 
-        - <name>: name of the watcher
+        - <name>: name or pattern of the watcher(s)
+        - <match>: watcher match method
     """
 
     name = "restart"
-    options = Command.waiting_options
+    options = list(Command.waiting_options)
+    options.append(match_options)
 
     def message(self, *args, **opts):
         if len(args) > 1:
@@ -64,13 +119,6 @@ class Restart(Command):
         return self.make_message(**opts)
 
     def execute(self, arbiter, props):
-        if 'name' in props:
-            watcher = self._get_watcher(arbiter, props['name'])
-            if props.get('waiting'):
-                resp = TransformableFuture()
-                resp.set_upstream_future(watcher.restart())
-                resp.set_transform_function(lambda x: {"info": x})
-                return resp
-            return watcher.restart()
-        else:
-            return arbiter.restart(inside_circusd=True)
+        return execute_watcher_start_stop_restart(
+            self, arbiter, props, 'restart', arbiter.restart,
+            partial(arbiter.restart, inside_circusd=True))

@@ -21,7 +21,12 @@ def _bools_to_papa_out(pipe, close):
 class PapaProcessWorker(psutil.Process):
     # noinspection PyMissingConstructor
     def __init__(self, proxy, pid):
-        self._init(pid, _ignore_nsp=True)
+        try:
+            self._init(pid, _ignore_nsp=True)
+        except AttributeError:
+            raise NotImplementedError(
+                'PapaProcessWorker requires psutil 2.0.0 or higher. '
+                'You probably have 1.x installed.')
         self._proxy = proxy
 
     def wait(self, timeout=None):
@@ -64,6 +69,13 @@ class PapaProcessProxy(Process):
         papa_name = 'circus.{0}.{1}'.format(self.name, self.wid).lower()
         self._papa_name = papa_name
         self._papa = papa.Papa()
+        if stderr is None and stdout is None:
+            p = self._papa.list_processes(papa_name)
+            if p:
+                p = p[papa_name]
+                if not p['running']:
+                    self._papa.remove_processes(papa_name)
+
         try:
             p = self._papa.make_process(papa_name,
                                         executable=self.executable, args=args,

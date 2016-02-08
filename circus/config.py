@@ -56,8 +56,8 @@ class DefaultConfigParser(StrictConfigParser):
     def set_env(self, env):
         self._env = dict(env)
 
-    def get(self, section, option):
-        res = StrictConfigParser.get(self, section, option)
+    def get(self, section, option, **kwargs):
+        res = StrictConfigParser.get(self, section, option, **kwargs)
         return replace_gnu_args(res, env=self._env)
 
     def items(self, section, noreplace=False):
@@ -259,7 +259,8 @@ def get_config(config_file):
 
                     watcher['hooks'][hook_name] = val
                 # default bool to True
-                elif opt in ('check_flapping', 'respawn', 'autostart'):
+                elif opt in ('check_flapping', 'respawn', 'autostart',
+                             'close_child_stdin'):
                     watcher[opt] = dget(section, opt, True, bool)
                 else:
                     # freeform

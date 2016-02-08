@@ -179,6 +179,9 @@ class Watcher(object):
     - **virtualenv** -- The root directory of a virtualenv. If provided, the
       watcher will load the environment for its execution. (default: None)
 
+    - **close_child_stdin**: If True, closes the stdin after the fork.
+      default: True.
+
     - **close_child_stdout**: If True, closes the stdout after the fork.
       default: False.
 
@@ -199,8 +202,9 @@ class Watcher(object):
                  copy_env=False, copy_path=False, max_age=0,
                  max_age_variance=30, hooks=None, respawn=True,
                  autostart=True, on_demand=False, virtualenv=None,
-                 close_child_stdout=False, close_child_stderr=False,
-                 virtualenv_py_ver=None, use_papa=False, **options):
+                 close_child_stdin=True, close_child_stdout=False,
+                 close_child_stderr=False, virtualenv_py_ver=None,
+                 use_papa=False, **options):
         self.name = name
         self.use_sockets = use_sockets
         self.on_demand = on_demand
@@ -234,6 +238,7 @@ class Watcher(object):
 
         self.respawn = respawn
         self.autostart = autostart
+        self.close_child_stdin = close_child_stdin
         self.close_child_stdout = close_child_stdout
         self.close_child_stderr = close_child_stderr
         self.use_papa = use_papa and papa is not None
@@ -263,8 +268,9 @@ class Watcher(object):
                           "priority", "copy_env", "singleton",
                           "stdout_stream_conf", "on_demand",
                           "stderr_stream_conf", "max_age", "max_age_variance",
-                          "close_child_stdout", "close_child_stderr",
-                          "use_papa") + tuple(options.keys()))
+                          "close_child_stdin", "close_child_stdout",
+                          "close_child_stderr", "use_papa") +
+                         tuple(options.keys()))
 
         if not working_dir:
             # working dir hasn't been set
@@ -643,6 +649,7 @@ class Watcher(object):
                                   use_fds=self.use_sockets, watcher=self,
                                   pipe_stdout=pipe_stdout,
                                   pipe_stderr=pipe_stderr,
+                                  close_child_stdin=self.close_child_stdin,
                                   close_child_stdout=self.close_child_stdout,
                                   close_child_stderr=self.close_child_stderr)
 
@@ -704,17 +711,22 @@ class Watcher(object):
 
     @gen.coroutine
     @util.debuglog
-    def kill_process(self, process):
+    def kill_process(self, process, stop_signal=None, graceful_timeout=None):
         """Kill process (stop_signal, graceful_timeout then SIGKILL)
         """
+        if stop_signal is None:
+            stop_signal = self.stop_signal
+        if graceful_timeout is None:
+            graceful_timeout = self.graceful_timeout
+
         if process.stopping:
             raise gen.Return(False)
         try:
             logger.debug("%s: kill process %s", self.name, process.pid)
             if self.stop_children:
-                self.send_signal_process(process, self.stop_signal)
+                self.send_signal_process(process, stop_signal)
             else:
-                self.send_signal(process.pid, self.stop_signal)
+                self.send_signal(process.pid, stop_signal)
                 self.notify_event("kill", {"process_pid": process.pid,
                                            "time": time.time()})
         except NoSuchProcess:
@@ -722,12 +734,12 @@ class Watcher(object):
 
         process.stopping = True
         waited = 0
-        while waited < self.graceful_timeout:
+        while waited < graceful_timeout:
             if not process.is_alive():
                 break
             yield tornado_sleep(0.1)
             waited += 0.1
-        if waited >= self.graceful_timeout:
+        if waited >= graceful_timeout:
             # On Windows we can't send a SIGKILL signal, but the
             # process.stop function will terminate the process
             # later anyway
@@ -742,12 +754,15 @@ class Watcher(object):
 
     @gen.coroutine
     @util.debuglog
-    def kill_processes(self):
+    def kill_processes(self, stop_signal=None, graceful_timeout=None):
         """Kill all processes (stop_signal, graceful_timeout then SIGKILL)
         """
         active_processes = self.get_active_processes()
         try:
-            yield [self.kill_process(process) for process in active_processes]
+            yield [self.kill_process(process,
+                                     stop_signal=stop_signal,
+                                     graceful_timeout=graceful_timeout)
+                   for process in active_processes]
         except OSError as e:
             if e.errno != errno.ESRCH:
                 raise
@@ -928,6 +943,11 @@ class Watcher(object):
             return
 
         self._status = "starting"
+
+        if self.stdout_stream and hasattr(self.stdout_stream, 'open'):
+            self.stdout_stream.open()
+        if self.stderr_stream and hasattr(self.stderr_stream, 'open'):
+            self.stderr_stream.open()
 
         self._create_redirectors()
         self.reap_processes()
